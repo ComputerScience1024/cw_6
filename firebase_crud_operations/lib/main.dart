@@ -1,16 +1,16 @@
-import 'package:flutter/material.dart';
-import 'package:firebase_core/firebase_core.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_core/firebase_core.dart';
+import 'package:flutter/material.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Firebase.initializeApp();
-  runApp(const TaskManagerApp());
+  runApp(const MyApp());
 }
 
-class TaskManagerApp extends StatelessWidget {
-  const TaskManagerApp({super.key});
+class MyApp extends StatelessWidget {
+  const MyApp({Key? key}) : super(key: key);
 
   @override
   Widget build(BuildContext context) {
@@ -23,203 +23,191 @@ class TaskManagerApp extends StatelessWidget {
 }
 
 class AuthGate extends StatelessWidget {
-  const AuthGate({super.key});
+  const AuthGate({Key? key}) : super(key: key);
 
   @override
   Widget build(BuildContext context) {
     return StreamBuilder<User?>(
       stream: FirebaseAuth.instance.authStateChanges(),
       builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting) {
-          return const Scaffold(body: Center(child: CircularProgressIndicator()));
+        if (snapshot.connectionState == ConnectionState.active) {
+          if (snapshot.hasData) return const TaskListScreen();
+          return const AuthScreen();
         }
-        if (snapshot.hasData) {
-          return const TaskListScreen();
-        }
-        return const LoginScreen();
+        return const Center(child: CircularProgressIndicator());
       },
     );
   }
 }
 
-class LoginScreen extends StatefulWidget {
-  const LoginScreen({super.key});
+class AuthScreen extends StatefulWidget {
+  const AuthScreen({Key? key}) : super(key: key);
 
   @override
-  State<LoginScreen> createState() => _LoginScreenState();
+  AuthScreenState createState() => AuthScreenState();
 }
 
-class _LoginScreenState extends State<LoginScreen> {
-  final emailController = TextEditingController();
-  final passwordController = TextEditingController();
+class AuthScreenState extends State<AuthScreen> {
+  final TextEditingController emailController = TextEditingController();
+  final TextEditingController passwordController = TextEditingController();
 
-  Future<void> _login() async {
-    try {
-      await FirebaseAuth.instance.signInWithEmailAndPassword(
-        email: emailController.text.trim(),
-        password: passwordController.text.trim(),
-      );
-    } catch (e) {
-      debugPrint("Login failed: $e");
-    }
+  Future<void> signIn() async {
+    await FirebaseAuth.instance.signInWithEmailAndPassword(
+      email: emailController.text,
+      password: passwordController.text,
+    );
   }
 
-  Future<void> _register() async {
-    try {
-      await FirebaseAuth.instance.createUserWithEmailAndPassword(
-        email: emailController.text.trim(),
-        password: passwordController.text.trim(),
-      );
-    } catch (e) {
-      debugPrint("Registration failed: $e");
-    }
+  Future<void> register() async {
+    await FirebaseAuth.instance.createUserWithEmailAndPassword(
+      email: emailController.text,
+      password: passwordController.text,
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Login/Register')),
+      appBar: AppBar(title: const Text("Login or Register")),
       body: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          children: [
-            TextField(controller: emailController, decoration: const InputDecoration(labelText: 'Email')),
-            TextField(controller: passwordController, decoration: const InputDecoration(labelText: 'Password'), obscureText: true),
-            const SizedBox(height: 12),
-            ElevatedButton(onPressed: _login, child: const Text("Login")),
-            TextButton(onPressed: _register, child: const Text("Register")),
-          ],
-        ),
+        padding: const EdgeInsets.all(16.0),
+        child: Column(children: [
+          TextField(controller: emailController, decoration: const InputDecoration(labelText: "Email")),
+          TextField(controller: passwordController, decoration: const InputDecoration(labelText: "Password"), obscureText: true),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+            children: [
+              ElevatedButton(onPressed: signIn, child: const Text("Login")),
+              ElevatedButton(onPressed: register, child: const Text("Register")),
+            ],
+          )
+        ]),
       ),
     );
   }
 }
 
 class TaskListScreen extends StatefulWidget {
-  const TaskListScreen({super.key});
+  const TaskListScreen({Key? key}) : super(key: key);
 
   @override
-  State<TaskListScreen> createState() => _TaskListScreenState();
+  TaskListScreenState createState() => TaskListScreenState();
 }
 
-class _TaskListScreenState extends State<TaskListScreen> {
-  final taskController = TextEditingController();
+class TaskListScreenState extends State<TaskListScreen> {
+  final TextEditingController taskController = TextEditingController();
+  final user = FirebaseAuth.instance.currentUser;
 
   Future<void> addTask(String name) async {
-    final user = FirebaseAuth.instance.currentUser;
-    if (user == null) return;
-
-    await FirebaseFirestore.instance.collection('tasks').add({
+    await FirebaseFirestore.instance.collection('users').doc(user!.uid).collection('tasks').add({
       'name': name,
       'completed': false,
-      'uid': user.uid,
-      'createdAt': FieldValue.serverTimestamp(),
-      'subtasks': [
-        {
-          'time': '9 am - 10 am',
-          'details': ['HW1', 'Essay2'],
-        },
-        {
-          'time': '12 pm - 2 pm',
-          'details': ['Read Book', 'Project Plan'],
-        },
-      ]
+      'timestamp': FieldValue.serverTimestamp(),
     });
   }
 
-  Future<void> updateTask(String id, bool completed) async {
-    await FirebaseFirestore.instance.collection('tasks').doc(id).update({'completed': completed});
+  Future<void> toggleComplete(String id, bool complete) async {
+    await FirebaseFirestore.instance.collection('users').doc(user!.uid).collection('tasks').doc(id).update({
+      'completed': complete,
+    });
   }
 
   Future<void> deleteTask(String id) async {
-    await FirebaseFirestore.instance.collection('tasks').doc(id).delete();
+    await FirebaseFirestore.instance.collection('users').doc(user!.uid).collection('tasks').doc(id).delete();
+  }
+
+  Widget buildSubTasks(String parentId) {
+    return StreamBuilder<QuerySnapshot>(
+      stream: FirebaseFirestore.instance
+          .collection('users')
+          .doc(user!.uid)
+          .collection('tasks')
+          .doc(parentId)
+          .collection('subtasks')
+          .snapshots(),
+      builder: (context, snapshot) {
+        if (!snapshot.hasData) return const SizedBox();
+        return Column(
+          children: snapshot.data!.docs.map((doc) {
+            return ListTile(
+              title: Text(doc['name']),
+              leading: Checkbox(
+                value: doc['completed'],
+                onChanged: (val) {
+                  FirebaseFirestore.instance
+                      .collection('users')
+                      .doc(user!.uid)
+                      .collection('tasks')
+                      .doc(parentId)
+                      .collection('subtasks')
+                      .doc(doc.id)
+                      .update({'completed': val});
+                },
+              ),
+            );
+          }).toList(),
+        );
+      },
+    );
   }
 
   @override
   Widget build(BuildContext context) {
-    final user = FirebaseAuth.instance.currentUser!;
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Your Tasks'),
+        title: const Text("Tasks"),
         actions: [
           IconButton(
-            onPressed: () => FirebaseAuth.instance.signOut(),
             icon: const Icon(Icons.logout),
+            onPressed: () => FirebaseAuth.instance.signOut(),
           ),
         ],
       ),
       body: Column(
         children: [
           Padding(
-            padding: const EdgeInsets.all(8),
-            child: Row(
-              children: [
-                Expanded(
-                  child: TextField(
-                    controller: taskController,
-                    decoration: const InputDecoration(hintText: 'Enter task'),
-                  ),
-                ),
-                IconButton(
-                  icon: const Icon(Icons.add),
-                  onPressed: () {
-                    if (taskController.text.isNotEmpty) {
-                      addTask(taskController.text.trim());
-                      taskController.clear();
-                    }
-                  },
-                ),
-              ],
-            ),
+            padding: const EdgeInsets.all(8.0),
+            child: Row(children: [
+              Expanded(child: TextField(controller: taskController, decoration: const InputDecoration(labelText: "New Task"))),
+              ElevatedButton(
+                onPressed: () {
+                  if (taskController.text.isNotEmpty) {
+                    addTask(taskController.text);
+                    taskController.clear();
+                  }
+                },
+                child: const Text("Add"),
+              ),
+            ]),
           ),
           Expanded(
             child: StreamBuilder<QuerySnapshot>(
-              stream: FirebaseFirestore.instance
-                  .collection('tasks')
-                  .where('uid', isEqualTo: user.uid)
-                  .orderBy('createdAt', descending: true)
-                  .snapshots(),
+              stream: FirebaseFirestore.instance.collection('users').doc(user!.uid).collection('tasks').orderBy('timestamp').snapshots(),
               builder: (context, snapshot) {
                 if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
-                final tasks = snapshot.data!.docs;
-
-                return ListView.builder(
-                  itemCount: tasks.length,
-                  itemBuilder: (context, index) {
-                    final doc = tasks[index];
-                    final data = doc.data() as Map<String, dynamic>;
-                    final subtasks = data['subtasks'] ?? [];
-
+                return ListView(
+                  children: snapshot.data!.docs.map((doc) {
                     return Card(
+                      margin: const EdgeInsets.symmetric(vertical: 4, horizontal: 8),
                       child: ExpansionTile(
                         title: Row(
                           children: [
                             Checkbox(
-                              value: data['completed'],
-                              onChanged: (value) => updateTask(doc.id, value!),
+                              value: doc['completed'],
+                              onChanged: (val) => toggleComplete(doc.id, val!),
                             ),
-                            Expanded(child: Text(data['name'] ?? 'No name')),
-                            IconButton(
-                              icon: const Icon(Icons.delete, color: Colors.red),
-                              onPressed: () => deleteTask(doc.id),
-                            ),
+                            Expanded(child: Text(doc['name'])),
+                            IconButton(icon: const Icon(Icons.delete), onPressed: () => deleteTask(doc.id)),
                           ],
                         ),
-                        children: List<Widget>.from(
-                          subtasks.map<Widget>((sub) {
-                            return ListTile(
-                              title: Text(sub['time']),
-                              subtitle: Text((sub['details'] as List<dynamic>).join(', ')),
-                            );
-                          }),
-                        ),
+                        children: [buildSubTasks(doc.id)],
                       ),
                     );
-                  },
+                  }).toList(),
                 );
               },
             ),
-          ),
+          )
         ],
       ),
     );
